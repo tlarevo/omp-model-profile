@@ -121,3 +121,17 @@ Effective profiles are merged as `{ ...user.profiles, ...project.profiles }`, so
 ```
 
 Thinking suffixes (`:minimal`, `:low`, `:medium`, `:high`, `:xhigh`, `:off`, `:auto`) are preserved in role settings. On activation, the **`default`** role's suffix is applied to the live session — including `:auto`, which keeps per-prompt adaptive thinking (low–xhigh). A `default` with no suffix leaves the current thinking selector untouched. Other roles keep their concrete suffixes for subagents/pickers via omp's resolver; `auto` is offered only for the `default` role since it is a session-level selector.
+
+## Releasing
+
+CI (`.github/workflows/ci.yml`) runs `bun run check` + `bun test` on every push to
+`main` and every PR. Releases are tag-driven:
+
+1. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new `## [x.y.z]` heading and commit.
+2. `npm version <patch|minor|major>` — bumps `package.json` and creates the `vX.Y.Z` commit + tag.
+3. `git push --follow-tags`.
+
+Pushing a `v*` tag triggers `.github/workflows/release.yml`, which re-runs check/tests,
+verifies the tag matches `package.json`, and publishes to npm with
+[provenance](https://docs.npmjs.com/generating-provenance-statements). It requires an
+`NPM_TOKEN` repository secret (an npm **automation** token with publish rights).

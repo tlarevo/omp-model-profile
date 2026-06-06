@@ -7,7 +7,7 @@ Named model-role profiles for omp. A profile sets different models for the built
 Once published to npm, anyone can install it with one command:
 
 ```sh
-omp plugin install omp-model-profiles
+omp plugin install omp-model-profile
 ```
 
 This downloads the package into `~/.omp/plugins/`, where omp discovers its
@@ -15,25 +15,28 @@ This downloads the package into `~/.omp/plugins/`, where omp discovers its
 `omp plugin list` / `omp plugin doctor`, then reload a running session with
 `/reload-plugins`.
 
-### Via an omp marketplace (no npm account required)
+### Direct from GitHub (no npm publish required)
 
-Host the plugin from any git repo that contains a
-`.claude-plugin/marketplace.json` catalog. For a monorepo, point the entry at
-the extension subdirectory:
+Because the package lives at the repo root, omp can install it straight from git:
+
+```sh
+omp plugin install github:tlarevo/omp-model-profile
+```
+
+### Via an omp marketplace (in-app discovery)
+
+Host a catalog from any git repo that contains a `.claude-plugin/marketplace.json`,
+with an entry pointing at this repo:
 
 ```json
 {
   "name": "my-omp-plugins",
-  "owner": { "name": "your-name" },
+  "owner": { "name": "tlarevo" },
   "plugins": [
     {
-      "name": "model-profiles",
+      "name": "model-profile",
       "description": "Named model-role profiles for omp",
-      "source": {
-        "source": "git-subdir",
-        "url": "your-name/your-repo",
-        "path": "extensions/model-profiles"
-      }
+      "source": { "source": "github", "repo": "tlarevo/omp-model-profile" }
     }
   ]
 }
@@ -42,25 +45,25 @@ the extension subdirectory:
 Users then run:
 
 ```sh
-omp plugin marketplace add your-name/your-repo
-omp plugin install model-profiles@my-omp-plugins
+omp plugin marketplace add <your-catalog-repo>
+omp plugin install model-profile@my-omp-plugins
 ```
 
-> npm sources in a marketplace catalog are not yet supported — use the direct
-> `omp plugin install omp-model-profiles` command above for the npm channel.
+> npm sources in a marketplace catalog are not yet supported — use the npm
+> command above (`omp plugin install omp-model-profile`) for the npm channel.
 
 ### Local development
 
-Symlink the working tree so edits go live with `/reload-plugins`:
+Clone this repo, then symlink it so edits go live with `/reload-plugins`:
 
 ```sh
-omp plugin link extensions/model-profiles
+omp plugin link path/to/omp-model-profile
 ```
 
 Or load it ad-hoc for a single session without installing:
 
 ```sh
-omp -e extensions/model-profiles/src/index.ts
+omp -e path/to/omp-model-profile/src/index.ts
 ```
 
 ## Commands

@@ -73,7 +73,7 @@ omp -e path/to/omp-model-profile/src/index.ts
 /model-profile use <name|none> Activate or clear a profile
 /model-profile show <name>     Inspect a profile
 /model-profile create <name>   Build a profile with model pickers
-/model-profile generate <name> <prompt>   Generate a profile with AI
+/model-profile generate [name] <prompt>   Generate a profile with AI
 /model-profile save <name>     Snapshot current role settings
 /model-profile edit <name>     Change one role's model
 /model-profile delete <name>   Remove a profile
@@ -84,8 +84,9 @@ Writes default to the project file. Add `--scope user`, `--user`, or `--project`
 
 ### Generate with AI
 
-`/model-profile generate <name> <prompt>` turns a description ("a fast, cheap
-profile preferring OpenAI models") into a profile. It asks an LLM — using your
+`/model-profile generate [name] <prompt>` turns a description ("a fast, cheap
+profile preferring OpenAI models") into a profile. The name is optional — skip
+it and the model proposes one along with the profile. It asks an LLM — using your
 current session model — to assign a model to each role, then validates every
 pick against your available models before saving and showing a preview you can
 refine or activate. The request is a one-shot completion that never touches the

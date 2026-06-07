@@ -34,6 +34,14 @@ export interface GenerateSpec {
 	thinkingLevels: readonly string[];
 }
 
+/** Result of a generation: the validated profile, notes, and a suggested name. */
+export interface GenerateResult {
+	profile: ModelProfile;
+	warnings: string[];
+	/** Profile name proposed by the model; the caller sanitizes/accepts it. */
+	suggestedName?: string;
+}
+
 /** A one-shot completion call, narrowed for injection in tests. */
 export type CompleteFn = (model: Model, context: Context, options?: SimpleStreamOptions) => Promise<AssistantMessage>;
 
@@ -71,6 +79,7 @@ export function buildRequest(prompt: string, spec: GenerateSpec): { context: Con
 		additionalProperties: false,
 		required: ["roles"],
 		properties: {
+			name: { type: "string", description: "A short kebab-case profile name (letters, digits, '-', '_')." },
 			description: { type: "string", description: "One short sentence describing the profile." },
 			roles: {
 				type: "array",
@@ -96,6 +105,7 @@ export function buildRequest(prompt: string, spec: GenerateSpec): { context: Con
 			"Choose models ONLY from the provided catalog (exact `provider/id` strings).",
 			"Honor the user's intent (e.g. a provider preference). Always assign the `default` role.",
 			"Use a thinking selector only when it improves the role; omit it otherwise.",
+			"Also propose a short kebab-case `name` for the profile.",
 		],
 		messages: [
 			{
@@ -135,10 +145,7 @@ function asString(value: unknown): string | undefined {
  * warning for each. Models are normalized to their resolved canonical
  * `provider/id` so stored values match the catalog exactly.
  */
-export function validateDraft(
-	raw: Record<string, unknown> | undefined,
-	spec: GenerateSpec,
-): { profile: ModelProfile; warnings: string[] } {
+export function validateDraft(raw: Record<string, unknown> | undefined, spec: GenerateSpec): GenerateResult {
 	const warnings: string[] = [];
 	const modelRoles: Record<string, string> = {};
 	const roleSet = new Set(spec.roleIds);
@@ -188,7 +195,8 @@ export function validateDraft(
 	const profile: ModelProfile = { modelRoles };
 	const description = asString(raw?.description);
 	if (description) profile.description = description;
-	return { profile, warnings };
+	const suggestedName = asString(raw?.name);
+	return suggestedName ? { profile, warnings, suggestedName } : { profile, warnings };
 }
 
 /**
@@ -202,7 +210,7 @@ export async function generateProfile(
 	prompt: string,
 	spec: GenerateSpec,
 	options?: { signal?: AbortSignal; complete?: CompleteFn },
-): Promise<{ profile: ModelProfile; warnings: string[] }> {
+): Promise<GenerateResult> {
 	const complete = options?.complete ?? completeSimple;
 	const { context, toolName } = buildRequest(prompt, spec);
 	const message = await complete(model, context, {

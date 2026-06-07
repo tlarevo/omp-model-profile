@@ -71,6 +71,18 @@ function isModelAvailable(ctx: ExtensionContext, value: string, available: reado
 	);
 }
 
+/** Coerce a free-form name into a valid profile name, or undefined if none survives. */
+export function slugifyName(raw: string | undefined): string | undefined {
+	if (!raw) return undefined;
+	const slug = raw
+		.trim()
+		.toLowerCase()
+		.replace(/[^\w.-]+/g, "-")
+		.replace(/-{2,}/g, "-")
+		.replace(/^[-._]+|[-._]+$/g, "");
+	return slug && NAME_PATTERN.test(slug) ? slug : undefined;
+}
+
 /** Built-in roles (with values, unless `includeAllBuiltins`) then custom extras. */
 function orderedRoles(pi: ExtensionAPI, profile: ModelProfile, includeAllBuiltins: boolean): string[] {
 	const builtins = pi.pi.MODEL_ROLE_IDS as readonly string[];
@@ -443,21 +455,26 @@ async function verbGenerate(
 	prompt: string,
 ): Promise<void> {
 	if (!ctx.hasUI) {
-		ctx.ui.notify("Generate requires interactive UI. Usage: /model-profile generate <name> <prompt>", "error");
+		ctx.ui.notify("Generate requires interactive UI. Usage: /model-profile generate [name] <prompt>", "error");
 		return;
 	}
 	const writeScope = scope ?? "project";
 
-	let target = name;
+	// Name is optional — a blank name lets the model propose one.
+	let target = name?.trim() || undefined;
 	if (!target) {
-		target = (await ctx.ui.input("New profile name", "e.g. anthropic-stack"))?.trim();
-		if (!target) return;
+		const entered = (
+			await ctx.ui.input("Profile name (optional — blank lets the AI name it)", "e.g. anthropic-stack")
+		)?.trim();
+		target = entered || undefined;
 	}
-	if (!NAME_PATTERN.test(target)) {
+	if (target && !NAME_PATTERN.test(target)) {
 		ctx.ui.notify(`Invalid profile name "${target}" (use letters, digits, ".", "-", "_").`, "error");
 		return;
 	}
-	if (effective.profiles[target] && !(await ctx.ui.confirm("Profile exists", `Overwrite "${target}"?`))) return;
+	if (target && effective.profiles[target] && !(await ctx.ui.confirm("Profile exists", `Overwrite "${target}"?`))) {
+		return;
+	}
 
 	let intent = prompt.trim();
 	if (!intent) {
@@ -493,11 +510,12 @@ async function verbGenerate(
 		thinkingLevels: THINKING_OPTIONS,
 	};
 
-	ctx.ui.setStatus("model-profile-gen", `Generating "${target}" with ${modelLabel(model)}…`);
+	ctx.ui.setStatus("model-profile-gen", `Generating profile with ${modelLabel(model)}…`);
 	let profile: ModelProfile;
 	let warnings: string[];
+	let suggestedName: string | undefined;
 	try {
-		({ profile, warnings } = await generateProfile(model, apiKey, intent, spec));
+		({ profile, warnings, suggestedName } = await generateProfile(model, apiKey, intent, spec));
 	} catch (err) {
 		ctx.ui.notify(`Generation failed: ${err instanceof Error ? err.message : String(err)}`, "error");
 		return;
@@ -513,20 +531,37 @@ async function verbGenerate(
 		ctx.ui.notify(`Generation notes:\n${warnings.map(w => `  • ${w}`).join("\n")}`, "warning");
 	}
 
-	await store.saveProfile(writeScope, target, profile);
-	let view = await store.loadEffective();
-	showProfile(pi, ctx, view, target);
+	// Final name: the user's choice wins; otherwise the model's suggestion;
+	// otherwise ask once as a fallback.
+	let finalName = target;
+	if (!finalName) {
+		finalName = slugifyName(suggestedName);
+		if (!finalName) {
+			finalName = (await ctx.ui.input("Name this profile", "e.g. generated"))?.trim() || undefined;
+		}
+		if (!finalName || !NAME_PATTERN.test(finalName)) {
+			ctx.ui.notify("No valid profile name — aborting.", "error");
+			return;
+		}
+		if (effective.profiles[finalName] && !(await ctx.ui.confirm("Profile exists", `Overwrite "${finalName}"?`))) {
+			return;
+		}
+	}
 
-	while (await ctx.ui.confirm("Refine?", `Edit a role in "${target}" before activating?`)) {
-		await verbEdit(pi, ctx, store, view, target, writeScope);
+	await store.saveProfile(writeScope, finalName, profile);
+	let view = await store.loadEffective();
+	showProfile(pi, ctx, view, finalName);
+
+	while (await ctx.ui.confirm("Refine?", `Edit a role in "${finalName}" before activating?`)) {
+		await verbEdit(pi, ctx, store, view, finalName, writeScope);
 		view = await store.loadEffective();
 	}
 
-	if (await ctx.ui.confirm("Activate?", `Use profile "${target}" now?`)) {
-		await store.setActive(writeScope, target);
-		await applyProfile(pi, ctx, target, view.profiles[target] ?? profile);
+	if (await ctx.ui.confirm("Activate?", `Use profile "${finalName}" now?`)) {
+		await store.setActive(writeScope, finalName);
+		await applyProfile(pi, ctx, finalName, view.profiles[finalName] ?? profile);
 	}
-	ctx.ui.notify(`Saved profile "${target}" (${writeScope}).`, "info");
+	ctx.ui.notify(`Saved profile "${finalName}" (${writeScope}).`, "info");
 }
 
 async function verbDelete(
@@ -613,7 +648,7 @@ const USAGE = [
 	"  /model-profile use <name|none> Activate or clear a profile",
 	"  /model-profile show <name>     Inspect a profile",
 	"  /model-profile create <name>   Build a profile (pick models)",
-	"  /model-profile generate <name> <prompt>  Generate a profile with AI",
+	"  /model-profile generate [name] <prompt>  Generate a profile with AI",
 	"  /model-profile save <name>     Snapshot current models",
 	"  /model-profile edit <name>     Change a role's model",
 	"  /model-profile delete <name>   Remove a profile",

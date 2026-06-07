@@ -96,11 +96,17 @@ describe("validateDraft", () => {
 		const onDefault = validateDraft({ roles: [{ role: "default", model: "openai/gpt", thinking: "auto" }] }, spec());
 		expect(onDefault.profile.modelRoles).toEqual({ default: "openai/gpt:auto" });
 	});
-
 	test("treats missing roles array as an empty draft with a warning", () => {
 		const { profile, warnings } = validateDraft({}, spec());
 		expect(profile.modelRoles).toEqual({});
 		expect(warnings).toHaveLength(1);
+	});
+
+	test("captures a suggested name when present", () => {
+		const withName = validateDraft({ name: "My Profile", roles: [{ role: "default", model: "openai/gpt" }] }, spec());
+		expect(withName.suggestedName).toBe("My Profile");
+		const without = validateDraft({ roles: [{ role: "default", model: "openai/gpt" }] }, spec());
+		expect(without.suggestedName).toBeUndefined();
 	});
 });
 
@@ -111,10 +117,17 @@ describe("buildRequest", () => {
 		expect(context.tools?.[0]?.name).toBe("emit_profile");
 
 		const params = context.tools?.[0]?.parameters as {
-			properties: { roles: { items: { properties: { role: { enum: string[] }; model: { enum: string[] } } } } };
+			required: string[];
+			properties: {
+				name?: unknown;
+				roles: { items: { properties: { role: { enum: string[] }; model: { enum: string[] } } } };
+			};
 		};
 		expect(params.properties.roles.items.properties.role.enum).toEqual(["default", "plan", "task"]);
 		expect(params.properties.roles.items.properties.model.enum).toEqual(["anthropic/opus", "openai/gpt"]);
+		// name is offered but optional (only `roles` is required).
+		expect(params.properties.name).toBeDefined();
+		expect(params.required).toEqual(["roles"]);
 
 		const userContent = context.messages[0]?.content;
 		expect(typeof userContent === "string" && userContent.includes("based on openai models")).toBe(true);

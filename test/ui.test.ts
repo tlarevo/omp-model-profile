@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { ProfileModel } from "../src/apply";
-import { pickModel } from "../src/ui";
+import { pickModel, slugifyName } from "../src/ui";
 
 function testModel(provider: string, id: string): ProfileModel {
 	return {
@@ -124,5 +124,23 @@ describe("pickModel provider tabs", () => {
 		const { ctx, calls } = makeCtx([]);
 		expect(await pickModel(ctx, [], "Pick model")).toBe("skip");
 		expect(calls).toHaveLength(0);
+	});
+});
+
+describe("slugifyName", () => {
+	test("lowercases and hyphenates free-form names", () => {
+		expect(slugifyName("OpenAI Fast")).toBe("openai-fast");
+		expect(slugifyName("anthropic/stack")).toBe("anthropic-stack");
+		expect(slugifyName("  --weird-- ")).toBe("weird");
+	});
+
+	test("keeps already-valid names", () => {
+		expect(slugifyName("valid_name.1")).toBe("valid_name.1");
+	});
+
+	test("returns undefined when nothing valid survives", () => {
+		expect(slugifyName("")).toBeUndefined();
+		expect(slugifyName(undefined)).toBeUndefined();
+		expect(slugifyName("###")).toBeUndefined();
 	});
 });

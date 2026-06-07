@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-07
+
 ### Added
 
 - Added the standalone model-profiles extension with `/model-profile` commands, project/user profile stores, session-start reapplication, bundled skill instructions, and focused tests.

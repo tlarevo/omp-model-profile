@@ -1,0 +1,128 @@
+import { describe, expect, test } from "bun:test";
+import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { ProfileModel } from "../src/apply";
+import { pickModel } from "../src/ui";
+
+function testModel(provider: string, id: string): ProfileModel {
+	return {
+		id,
+		name: `${provider}/${id}`,
+		api: "openai-completions",
+		provider,
+		baseUrl: "https://example.invalid",
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 128_000,
+		maxTokens: 8_192,
+	};
+}
+
+type SelectOptionInput = string | { label: string; description?: string };
+interface SelectDialog {
+	onLeft?: () => void;
+	onRight?: () => void;
+	helpText?: string;
+}
+interface SelectCall {
+	title: string;
+	options: SelectOptionInput[];
+	dialog?: SelectDialog;
+}
+type ScriptStep = { move: "left" | "right" } | { pick: string } | { cancel: true };
+
+/** Build a fake ExtensionContext whose `ui.select` replays a scripted sequence. */
+function makeCtx(script: ScriptStep[]): { ctx: ExtensionContext; calls: SelectCall[] } {
+	const calls: SelectCall[] = [];
+	let step = 0;
+	const select = async (title: string, options: SelectOptionInput[], dialog?: SelectDialog) => {
+		calls.push({ title, options, dialog });
+		const action = script[step++];
+		if (!action) return undefined; // out of script → treated as cancel
+		if ("move" in action) {
+			if (action.move === "left") dialog?.onLeft?.();
+			else dialog?.onRight?.();
+			return undefined;
+		}
+		if ("cancel" in action) return undefined;
+		return action.pick;
+	};
+	const ctx = { ui: { select, notify: () => {} } } as unknown as ExtensionContext;
+	return { ctx, calls };
+}
+
+const opus = testModel("anthropic", "opus");
+const haiku = testModel("anthropic", "haiku");
+const gpt = testModel("openai", "gpt");
+const qwen = testModel("alibaba", "qwen");
+const multi = [opus, haiku, gpt, qwen];
+
+describe("pickModel provider tabs", () => {
+	test("switches provider tabs with arrows and filters to that provider", async () => {
+		// providers sorted: [All, alibaba, anthropic, openai]; right x2 → anthropic.
+		const { ctx, calls } = makeCtx([{ move: "right" }, { move: "right" }, { pick: "anthropic/opus" }]);
+
+		const result = await pickModel(ctx, multi, "Pick model");
+
+		expect(result).toBe(opus);
+		expect(calls).toHaveLength(3);
+		const anthropicTab = calls[2];
+		expect(anthropicTab.title).toContain("anthropic (3/4)");
+		const modelLabels = anthropicTab.options
+			.map(option => (typeof option === "string" ? option : option.label))
+			.filter(label => label !== "— skip —");
+		expect(modelLabels).toEqual(["anthropic/haiku", "anthropic/opus"]);
+	});
+
+	test("left arrow from the first tab wraps to the last provider", async () => {
+		const { ctx, calls } = makeCtx([{ move: "left" }, { pick: "openai/gpt" }]);
+
+		const result = await pickModel(ctx, multi, "Pick model");
+
+		expect(result).toBe(gpt);
+		expect(calls[1].title).toContain("openai (4/4)");
+		const modelLabels = calls[1].options
+			.map(option => (typeof option === "string" ? option : option.label))
+			.filter(label => label !== "— skip —");
+		expect(modelLabels).toEqual(["openai/gpt"]);
+	});
+
+	test("All tab lists every provider's models", async () => {
+		const { ctx, calls } = makeCtx([{ pick: "alibaba/qwen" }]);
+
+		const result = await pickModel(ctx, multi, "Pick model");
+
+		expect(result).toBe(qwen);
+		const modelLabels = calls[0].options
+			.map(option => (typeof option === "string" ? option : option.label))
+			.filter(label => label !== "— skip —");
+		expect(modelLabels).toEqual(["alibaba/qwen", "anthropic/haiku", "anthropic/opus", "openai/gpt"]);
+	});
+
+	test("choosing skip returns skip", async () => {
+		const { ctx } = makeCtx([{ pick: "— skip —" }]);
+		expect(await pickModel(ctx, multi, "Pick model")).toBe("skip");
+	});
+
+	test("escape returns cancel", async () => {
+		const { ctx } = makeCtx([{ cancel: true }]);
+		expect(await pickModel(ctx, multi, "Pick model")).toBe("cancel");
+	});
+
+	test("a single provider offers no tabs", async () => {
+		const { ctx, calls } = makeCtx([{ pick: "anthropic/opus" }]);
+
+		const result = await pickModel(ctx, [opus, haiku], "Pick model");
+
+		expect(result).toBe(opus);
+		expect(calls[0].dialog?.onLeft).toBeUndefined();
+		expect(calls[0].dialog?.onRight).toBeUndefined();
+		expect(calls[0].title).toBe("Pick model");
+	});
+
+	test("no available models returns skip without prompting", async () => {
+		const { ctx, calls } = makeCtx([]);
+		expect(await pickModel(ctx, [], "Pick model")).toBe("skip");
+		expect(calls).toHaveLength(0);
+	});
+});

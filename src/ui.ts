@@ -126,23 +126,57 @@ async function pickRole(pi: ExtensionAPI, ctx: ExtensionContext, profile: ModelP
 	return chosen ? byLabel.get(chosen) : undefined;
 }
 
-async function pickModel(ctx: ExtensionContext, available: readonly ProfileModel[], title: string): Promise<ModelPick> {
+export async function pickModel(
+	ctx: ExtensionContext,
+	available: readonly ProfileModel[],
+	title: string,
+): Promise<ModelPick> {
 	if (available.length === 0) {
 		ctx.ui.notify("No models available — configure an API key first.", "warning");
 		return "skip";
 	}
-	const sorted = [...available].sort((a, b) => modelLabel(a).localeCompare(modelLabel(b)));
-	const byLabel = new Map<string, ProfileModel>();
-	const options: SelectOption[] = [{ label: "— skip —", description: "Leave this role unset" }];
-	for (const model of sorted) {
-		const label = modelLabel(model);
-		byLabel.set(label, model);
-		options.push({ label, description: model.name });
+	// Provider "tabs": `All` plus each distinct provider, switched with ←/→.
+	// The same model id is often served by multiple providers, so the provider
+	// is part of the selection key — jump to a provider, then type-to-filter.
+	const providers = ["All", ...[...new Set(available.map(model => model.provider))].sort()];
+	const multiProvider = providers.length > 2;
+	let tab = 0;
+	for (;;) {
+		const provider = providers[tab];
+		const pool = provider === "All" ? available : available.filter(model => model.provider === provider);
+		const sorted = [...pool].sort((a, b) => modelLabel(a).localeCompare(modelLabel(b)));
+		const byLabel = new Map<string, ProfileModel>();
+		const options: SelectOption[] = [{ label: "— skip —", description: "Leave this role unset" }];
+		for (const model of sorted) {
+			const label = modelLabel(model);
+			byLabel.set(label, model);
+			options.push({ label, description: model.name });
+		}
+		const tabHint = multiProvider ? `  ·  ${provider} (${tab + 1}/${providers.length})` : "";
+		let moved: -1 | 1 | undefined;
+		const chosen = await ctx.ui.select(`${title}${tabHint}`, options, {
+			helpText: multiProvider
+				? "↑↓ select · type to filter · ←→ provider · enter confirm"
+				: "↑↓ select · type to filter · enter confirm",
+			onLeft: multiProvider
+				? () => {
+						moved = -1;
+					}
+				: undefined,
+			onRight: multiProvider
+				? () => {
+						moved = 1;
+					}
+				: undefined,
+		});
+		if (moved !== undefined) {
+			tab = (tab + moved + providers.length) % providers.length;
+			continue;
+		}
+		if (chosen === undefined) return "cancel";
+		const model = byLabel.get(chosen);
+		return model ?? "skip";
 	}
-	const chosen = await ctx.ui.select(title, options);
-	if (chosen === undefined) return "cancel";
-	const model = byLabel.get(chosen);
-	return model ?? "skip";
 }
 
 /**

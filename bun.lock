@@ -6,11 +6,13 @@
       "name": "omp-model-profile",
       "devDependencies": {
         "@biomejs/biome": "^2.4.16",
+        "@oh-my-pi/pi-ai": "^15",
         "@oh-my-pi/pi-coding-agent": "^15",
         "@types/bun": "^1.3.14",
         "@typescript/native-preview": "7.0.0-dev.20260527.1",
       },
       "peerDependencies": {
+        "@oh-my-pi/pi-ai": ">=15",
         "@oh-my-pi/pi-coding-agent": ">=15",
       },
     },

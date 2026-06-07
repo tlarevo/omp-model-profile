@@ -7,6 +7,7 @@
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import { type ProfileModel, resolveModelString } from "./apply";
+import { type GenerateSpec, generateProfile } from "./generate";
 import { applyProfile, clearProfile } from "./runtime";
 import type { ProfileStore } from "./store";
 import type { EffectiveProfiles, ModelProfile, ProfileScope } from "./types";
@@ -21,6 +22,8 @@ interface ParsedArgs {
 	verb: string;
 	name: string | undefined;
 	scope: ProfileScope | undefined;
+	/** Positional tokens after the name, joined — used as the `generate` prompt. */
+	rest: string;
 }
 
 /** Split `args` into a verb, an optional name, and an optional explicit scope. */
@@ -48,6 +51,7 @@ function parseArgs(args: string): ParsedArgs {
 		verb: (positional[0] ?? "").toLowerCase(),
 		name: positional[1],
 		scope,
+		rest: positional.slice(2).join(" "),
 	};
 }
 
@@ -429,6 +433,102 @@ async function verbEdit(
 	ctx.ui.notify(`Updated "${target}" → ${role}.`, "info");
 }
 
+async function verbGenerate(
+	pi: ExtensionAPI,
+	ctx: ExtensionCommandContext,
+	store: ProfileStore,
+	effective: EffectiveProfiles,
+	name: string | undefined,
+	scope: ProfileScope | undefined,
+	prompt: string,
+): Promise<void> {
+	if (!ctx.hasUI) {
+		ctx.ui.notify("Generate requires interactive UI. Usage: /model-profile generate <name> <prompt>", "error");
+		return;
+	}
+	const writeScope = scope ?? "project";
+
+	let target = name;
+	if (!target) {
+		target = (await ctx.ui.input("New profile name", "e.g. anthropic-stack"))?.trim();
+		if (!target) return;
+	}
+	if (!NAME_PATTERN.test(target)) {
+		ctx.ui.notify(`Invalid profile name "${target}" (use letters, digits, ".", "-", "_").`, "error");
+		return;
+	}
+	if (effective.profiles[target] && !(await ctx.ui.confirm("Profile exists", `Overwrite "${target}"?`))) return;
+
+	let intent = prompt.trim();
+	if (!intent) {
+		intent = (await ctx.ui.input("Describe the profile", "e.g. fast OpenAI models for everything"))?.trim() ?? "";
+		if (!intent) return;
+	}
+
+	const available = ctx.modelRegistry.getAvailable();
+	if (available.length === 0) {
+		ctx.ui.notify("No models available — configure an API key first.", "warning");
+		return;
+	}
+	let model = ctx.model;
+	if (!model) {
+		const pick = await pickModel(ctx, available, "Pick a model to generate with");
+		if (pick === "cancel" || pick === "skip") return;
+		model = pick;
+	}
+	const apiKey = await ctx.modelRegistry.getApiKey(model);
+	if (!apiKey) {
+		ctx.ui.notify(`No API key available for ${modelLabel(model)}.`, "error");
+		return;
+	}
+
+	const roleIds = pi.pi.MODEL_ROLE_IDS as readonly string[];
+	const roleDescriptions: Record<string, string> = {};
+	for (const role of roleIds) roleDescriptions[role] = roleLabel(pi, role);
+	const spec: GenerateSpec = {
+		roleIds,
+		roleDescriptions,
+		available,
+		resolveCanonical: id => ctx.modelRegistry.resolveCanonicalModel(id, { availableOnly: true }),
+		thinkingLevels: THINKING_OPTIONS,
+	};
+
+	ctx.ui.setStatus("model-profile-gen", `Generating "${target}" with ${modelLabel(model)}…`);
+	let profile: ModelProfile;
+	let warnings: string[];
+	try {
+		({ profile, warnings } = await generateProfile(model, apiKey, intent, spec));
+	} catch (err) {
+		ctx.ui.notify(`Generation failed: ${err instanceof Error ? err.message : String(err)}`, "error");
+		return;
+	} finally {
+		ctx.ui.setStatus("model-profile-gen", undefined);
+	}
+
+	if (!profile.modelRoles.default) {
+		ctx.ui.notify("Generation did not assign a default model — try a more specific prompt.", "error");
+		return;
+	}
+	if (warnings.length > 0) {
+		ctx.ui.notify(`Generation notes:\n${warnings.map(w => `  • ${w}`).join("\n")}`, "warning");
+	}
+
+	await store.saveProfile(writeScope, target, profile);
+	let view = await store.loadEffective();
+	showProfile(pi, ctx, view, target);
+
+	while (await ctx.ui.confirm("Refine?", `Edit a role in "${target}" before activating?`)) {
+		await verbEdit(pi, ctx, store, view, target, writeScope);
+		view = await store.loadEffective();
+	}
+
+	if (await ctx.ui.confirm("Activate?", `Use profile "${target}" now?`)) {
+		await store.setActive(writeScope, target);
+		await applyProfile(pi, ctx, target, view.profiles[target] ?? profile);
+	}
+	ctx.ui.notify(`Saved profile "${target}" (${writeScope}).`, "info");
+}
+
 async function verbDelete(
 	pi: ExtensionAPI,
 	ctx: ExtensionCommandContext,
@@ -474,6 +574,7 @@ async function menuRoot(
 	const action = await ctx.ui.select("Model Profiles", [
 		{ label: "Use", description: "Switch the active profile" },
 		{ label: "Create", description: "Build a new profile" },
+		{ label: "Generate (AI)", description: "Describe a profile; AI assigns models" },
 		{ label: "Edit", description: "Change a role's model" },
 		{ label: "Save current", description: "Snapshot current models as a profile" },
 		{ label: "Show", description: "Inspect a profile" },
@@ -485,6 +586,8 @@ async function menuRoot(
 			return verbUse(pi, ctx, store, effective, undefined, undefined);
 		case "Create":
 			return verbCreate(pi, ctx, store, effective, undefined, undefined);
+		case "Generate (AI)":
+			return verbGenerate(pi, ctx, store, effective, undefined, undefined, "");
 		case "Edit":
 			return verbEdit(pi, ctx, store, effective, undefined, undefined);
 		case "Save current":
@@ -510,6 +613,7 @@ const USAGE = [
 	"  /model-profile use <name|none> Activate or clear a profile",
 	"  /model-profile show <name>     Inspect a profile",
 	"  /model-profile create <name>   Build a profile (pick models)",
+	"  /model-profile generate <name> <prompt>  Generate a profile with AI",
 	"  /model-profile save <name>     Snapshot current models",
 	"  /model-profile edit <name>     Change a role's model",
 	"  /model-profile delete <name>   Remove a profile",
@@ -525,7 +629,7 @@ export async function handleProfileCommand(
 	args: string,
 	store: ProfileStore,
 ): Promise<EffectiveProfiles> {
-	const { verb, name, scope } = parseArgs(args);
+	const { verb, name, scope, rest } = parseArgs(args);
 	const effective = await store.loadEffective();
 
 	switch (verb) {
@@ -547,6 +651,10 @@ export async function handleProfileCommand(
 			break;
 		case "create":
 			await verbCreate(pi, ctx, store, effective, name, scope);
+			break;
+		case "generate":
+		case "gen":
+			await verbGenerate(pi, ctx, store, effective, name, scope, rest);
 			break;
 		case "save":
 			await verbSave(pi, ctx, store, effective, name, scope);

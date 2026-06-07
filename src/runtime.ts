@@ -17,6 +17,21 @@ const ROLES_KEY = "modelRoles" as const;
 const CYCLE_KEY = "cycleOrder" as const;
 const TASK_KEY = "task.agentModelOverrides" as const;
 
+/**
+ * Surface the active profile in the host UI. Prefers the powerline status-line
+ * segment (`setStatusSegment`) so the indicator renders inside the editor top
+ * border; falls back to the separate hook-status line (`setStatus`) on hosts
+ * that predate that API. Pass `undefined` to clear.
+ */
+function setProfileStatus(ctx: ExtensionContext, text: string | undefined): void {
+	if (!ctx.hasUI) return;
+	const ui = ctx.ui as typeof ctx.ui & {
+		setStatusSegment?: (key: string, text: string | undefined, options?: { side?: "left" | "right" }) => void;
+	};
+	if (ui.setStatusSegment) ui.setStatusSegment(STATUS_KEY, text);
+	else ui.setStatus(STATUS_KEY, text);
+}
+
 /** Drop every override this extension manages, returning to base settings. */
 function clearOverrides(pi: ExtensionAPI): void {
 	const s = pi.pi.settings;
@@ -88,7 +103,7 @@ export async function applyProfile(
 
 	applyDefaultThinking(pi, profile);
 
-	if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, `profile: ${name}`);
+	setProfileStatus(ctx, `◈ ${name}`);
 }
 
 /**
@@ -104,5 +119,5 @@ export async function clearProfile(pi: ExtensionAPI, ctx: ExtensionContext): Pro
 		if (model) await pi.setModel(model);
 	}
 
-	if (ctx.hasUI) ctx.ui.setStatus(STATUS_KEY, undefined);
+	setProfileStatus(ctx, undefined);
 }

@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.1] - 2026-06-28
 
 ### Added
 
@@ -11,6 +11,8 @@
 ### Changed
 
 - Raised the `@oh-my-pi/pi-coding-agent` / `@oh-my-pi/pi-ai` devDependency floor from `^15` to `>=15.10.11` to match the documented peer minimum, so local `check`/`test` run against a host that actually ships the `config/model-roles` subpath instead of relying on the local shim to mask the gap.
+
+- Migrated `.github/workflows/release.yml` from a `NODE_AUTH_TOKEN`/`NPM_TOKEN` repository secret to [npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) (OIDC) — no long-lived publish token stored in CI. Fixes the v0.2.0 release, which failed at `npm publish` with `ENEEDAUTH` because no `NPM_TOKEN` secret was ever configured. Requires a Trusted Publisher configured on npmjs.com for this package (GitHub Actions, `release.yml`, `npm publish` action) and Node `>=22.14.0` / npm CLI `>=11.5.1` in the workflow.
 
 ### Fixed
 

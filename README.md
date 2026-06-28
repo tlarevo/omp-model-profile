@@ -143,7 +143,7 @@ Thinking suffixes (`:minimal`, `:low`, `:medium`, `:high`, `:xhigh`, `:off`, `:a
 Requires omp host `@oh-my-pi/pi-coding-agent >= 15.10.11` (for the
 `config/model-roles` subpath export) and `@oh-my-pi/pi-ai >= 15`.
 
-Last verified against omp **v16.2.2** (2026-06-27) via `bun run check:omp-head`,
+Last verified against omp **v16.2.2** (2026-06-28) via `bun run check:omp-head`,
 which typechecks this plugin against the current omp source.
 
 ## Releasing
@@ -157,6 +157,9 @@ CI (`.github/workflows/ci.yml`) runs `bun run check` + `bun test` on every push 
 4. `git push --follow-tags`.
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`, which re-runs check/tests,
-verifies the tag matches `package.json`, and publishes to npm with
-[provenance](https://docs.npmjs.com/generating-provenance-statements). It requires an
-`NPM_TOKEN` repository secret (an npm **automation** token with publish rights).
+verifies the tag matches `package.json`, and publishes to npm. Publishing uses
+[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) (OIDC) — no
+`NPM_TOKEN` secret required. The package must have a Trusted Publisher configured
+on npmjs.com (package Settings → Trusted publishing) naming this repository,
+`release.yml`, and the `npm publish` action; npm auto-generates provenance for
+trusted-publisher releases.

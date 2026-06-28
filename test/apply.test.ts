@@ -1,21 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { ProfileModel } from "../src/apply";
 import { mapProfileToOverrides, resolveModelString, splitThinkingSuffix, stripThinkingSuffix } from "../src/apply";
-
-function testModel(provider: string, id: string): ProfileModel {
-	return {
-		id,
-		name: `${provider}/${id}`,
-		api: "openai-completions",
-		provider,
-		baseUrl: "https://example.invalid",
-		reasoning: false,
-		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 128_000,
-		maxTokens: 8_192,
-	};
-}
+import { testModel } from "./fixtures";
 
 const sonnet = testModel("anthropic", "claude-sonnet-4-5");
 const opus = testModel("anthropic", "claude-opus-4-5");

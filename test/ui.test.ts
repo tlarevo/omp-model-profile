@@ -1,22 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-import type { ProfileModel } from "../src/apply";
 import { pickModel, slugifyName } from "../src/ui";
-
-function testModel(provider: string, id: string): ProfileModel {
-	return {
-		id,
-		name: `${provider}/${id}`,
-		api: "openai-completions",
-		provider,
-		baseUrl: "https://example.invalid",
-		reasoning: true,
-		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 128_000,
-		maxTokens: 8_192,
-	};
-}
+import { testModel } from "./fixtures";
 
 type SelectOptionInput = string | { label: string; description?: string };
 interface SelectDialog {

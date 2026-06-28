@@ -8,6 +8,9 @@
 		"strict": true,
 		"skipLibCheck": true,
 		"verbatimModuleSyntax": true,
+		"paths": {
+			"@oh-my-pi/pi-coding-agent/config/model-roles": ["./src/shims/model-roles.ts"]
+		},
 		"noEmit": true,
 		"resolveJsonModule": true,
 		"esModuleInterop": true,

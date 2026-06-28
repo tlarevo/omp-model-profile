@@ -3,21 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import type { ProfileModel } from "../src/apply";
 import { applyProfile, clearProfile } from "../src/runtime";
 import type { ModelProfile } from "../src/types";
-
-function testModel(provider: string, id: string): ProfileModel {
-	return {
-		id,
-		name: `${provider}/${id}`,
-		api: "openai-completions",
-		provider,
-		baseUrl: "https://example.invalid",
-		reasoning: true,
-		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 128_000,
-		maxTokens: 8_192,
-	};
-}
+import { testModel } from "./fixtures";
 
 const opus = testModel("anthropic", "claude-opus-4-5");
 

@@ -138,14 +138,23 @@ Effective profiles are merged as `{ ...user.profiles, ...project.profiles }`, so
 
 Thinking suffixes (`:minimal`, `:low`, `:medium`, `:high`, `:xhigh`, `:off`, `:auto`) are preserved in role settings. On activation, the **`default`** role's suffix is applied to the live session — including `:auto`, which keeps per-prompt adaptive thinking (low–xhigh). A `default` with no suffix leaves the current thinking selector untouched. Other roles keep their concrete suffixes for subagents/pickers via omp's resolver; `auto` is offered only for the `default` role since it is a session-level selector.
 
+## Compatibility
+
+Requires omp host `@oh-my-pi/pi-coding-agent >= 15.10.11` (for the
+`config/model-roles` subpath export) and `@oh-my-pi/pi-ai >= 15`.
+
+Last verified against omp **v16.2.2** (2026-06-27) via `bun run check:omp-head`,
+which typechecks this plugin against the current omp source.
+
 ## Releasing
 
 CI (`.github/workflows/ci.yml`) runs `bun run check` + `bun test` on every push to
 `main` and every PR. Releases are tag-driven:
 
 1. Move the `[Unreleased]` entries in `CHANGELOG.md` under a new `## [x.y.z]` heading and commit.
-2. `npm version <patch|minor|major>` — bumps `package.json` and creates the `vX.Y.Z` commit + tag.
-3. `git push --follow-tags`.
+2. Refresh the "Last verified against" line in the Compatibility section (run `bun run check:omp-head` first).
+3. `npm version <patch|minor|major>` — bumps `package.json` and creates the `vX.Y.Z` commit + tag.
+4. `git push --follow-tags`.
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`, which re-runs check/tests,
 verifies the tag matches `package.json`, and publishes to npm with

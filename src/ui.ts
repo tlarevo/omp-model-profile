@@ -6,6 +6,7 @@
  * Pickers are Level-1 `ctx.ui.select` menus — no model names are ever typed.
  */
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import { getRoleInfo, MODEL_ROLE_IDS } from "@oh-my-pi/pi-coding-agent/config/model-roles";
 import { type ProfileModel, resolveModelString } from "./apply";
 import { type GenerateSpec, generateProfile } from "./generate";
 import { applyProfile, clearProfile } from "./runtime";
@@ -54,9 +55,8 @@ function parseArgs(args: string): ParsedArgs {
 		rest: positional.slice(2).join(" "),
 	};
 }
-
 function roleLabel(pi: ExtensionAPI, role: string): string {
-	return pi.pi.getRoleInfo(role, pi.pi.settings).name;
+	return getRoleInfo(role, pi.pi.settings).name;
 }
 
 function modelLabel(model: ProfileModel): string {
@@ -84,8 +84,8 @@ export function slugifyName(raw: string | undefined): string | undefined {
 }
 
 /** Built-in roles (with values, unless `includeAllBuiltins`) then custom extras. */
-function orderedRoles(pi: ExtensionAPI, profile: ModelProfile, includeAllBuiltins: boolean): string[] {
-	const builtins = pi.pi.MODEL_ROLE_IDS as readonly string[];
+function orderedRoles(_pi: ExtensionAPI, profile: ModelProfile, includeAllBuiltins: boolean): string[] {
+	const builtins = MODEL_ROLE_IDS;
 	const builtinSet = new Set<string>(builtins);
 	const roles: string[] = [];
 	for (const role of builtins) {
@@ -335,7 +335,7 @@ async function verbCreate(
 
 	const available = ctx.modelRegistry.getAvailable();
 	const modelRoles: Record<string, string> = {};
-	for (const role of pi.pi.MODEL_ROLE_IDS) {
+	for (const role of MODEL_ROLE_IDS) {
 		const label = roleLabel(pi, role);
 		const pick = await pickModel(ctx, available, `Model for ${label} (${role})`);
 		if (pick === "cancel") return;
@@ -382,7 +382,7 @@ async function verbSave(
 	}
 
 	const s = pi.pi.settings;
-	const builtins = new Set<string>(pi.pi.MODEL_ROLE_IDS as readonly string[]);
+	const builtins = new Set<string>(MODEL_ROLE_IDS);
 	const modelRoles: Record<string, string> = {};
 	for (const [role, value] of Object.entries(s.getModelRoles())) {
 		if (builtins.has(role) && value) modelRoles[role] = value;
@@ -499,7 +499,7 @@ async function verbGenerate(
 		return;
 	}
 
-	const roleIds = pi.pi.MODEL_ROLE_IDS as readonly string[];
+	const roleIds = MODEL_ROLE_IDS;
 	const roleDescriptions: Record<string, string> = {};
 	for (const role of roleIds) roleDescriptions[role] = roleLabel(pi, role);
 	const spec: GenerateSpec = {

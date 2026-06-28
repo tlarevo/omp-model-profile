@@ -40,14 +40,28 @@ jobs:
   #     plan — Pro, Pro+, Business, or Enterprise; the issue-assignment API
   #     used here is broader than the Business/Enterprise-only agent-tasks
   #     API). See https://docs.github.com/en/copilot/concepts/agents/cloud-agent/access-management
-  #   - A `COPILOT_ASSIGN_PAT` repository secret: a personal access token
-  #     (classic, `repo` scope) or fine-grained PAT with "Read access to
-  #     metadata" + "Read and write access to actions, contents, issues and
-  #     pull requests". The default GITHUB_TOKEN cannot assign Copilot —
+  #   - A `COPILOT_ASSIGN_PAT` repository secret. As of 2026-06-28, a
+  #     fine-grained PAT was empirically confirmed NOT to work for this
+  #     preview feature: both the REST `POST /issues/{number}/assignees`
+  #     endpoint and the GraphQL `addAssigneesToAssignable` mutation return
+  #     `403 Resource not accessible by personal access token` for a
+  #     fine-grained PAT with all 5 documented permissions (Metadata read;
+  #     Actions/Contents/Issues/Pull requests read+write) — the identical
+  #     call succeeded with an OAuth-based `gh` CLI token (not yet tested
+  #     with a classic PAT). GitHub's docs say a classic PAT with the
+  #     `repo` scope should work; try that if a fine-grained PAT 403s here.
+  #     The default GITHUB_TOKEN cannot assign Copilot either way —
   #     assignment requires a user-to-server token.
-  # Without COPILOT_ASSIGN_PAT, or if Copilot assignment otherwise fails
-  # (e.g. cloud agent not enabled), this still files a plain, unassigned
-  # issue via the default GITHUB_TOKEN so the drift is never silently lost.
+  #
+  # Implementation note: creating an issue via REST with
+  # `assignees: ["copilot-swe-agent[bot]"]` + `agent_assignment` in the same
+  # POST silently succeeds WITHOUT actually assigning Copilot — no error,
+  # just a no-op on those fields (empirically confirmed). The issue is
+  # therefore created plainly first, then Copilot is assigned as a
+  # separate, best-effort step via the GraphQL `addAssigneesToAssignable`
+  # mutation (requires the `GraphQL-Features` header). If that step fails
+  # for any reason (PAT unset/wrong type, cloud agent not enabled), the
+  # issue still exists, just unassigned — drift is never silently lost.
   file-agent-task:
     needs: drift
     if: failure()
@@ -61,14 +75,14 @@ jobs:
         with:
           name: drift-output
         continue-on-error: true
-      - name: File (or skip if already open) a drift issue
+      - name: File a drift issue, then best-effort assign Copilot
         env:
           GH_TOKEN: ${{ github.token }}
           COPILOT_ASSIGN_PAT: ${{ secrets.COPILOT_ASSIGN_PAT }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
 
           existing=$(gh issue list --repo "$GITHUB_REPOSITORY" \
             --search 'in:title "omp HEAD drift" is:open' \
@@ -97,37 +111,67 @@ jobs:
             "" \
             "Update this plugin's source to match the new host API shape, then verify with \`bun run check && bun test\` (against the installed host) AND \`bun run check:omp-head\` (against omp HEAD) before opening a PR.")
 
-          if [ -n "$COPILOT_ASSIGN_PAT" ]; then
-            instructions="Read the diagnostics in the issue body (or re-run \`bun run check:omp-head\`) to see the exact tsgo errors. Fix the drift in this plugin's src/ so it typechecks against the current omp host source again. Verify with \`bun run check && bun test\` (against the installed host) AND \`bun run check:omp-head\` (against omp HEAD) before opening the PR."
-            payload=$(jq -n \
-              --arg title "$title" \
-              --arg body "$body" \
-              --arg instructions "$instructions" \
-              --arg repo "$GITHUB_REPOSITORY" \
-              '{
-                title: $title,
-                body: $body,
-                assignees: ["copilot-swe-agent[bot]"],
-                agent_assignment: {
-                  target_repo: $repo,
-                  base_branch: "main",
-                  custom_instructions: $instructions
-                }
-              }')
-            if GH_TOKEN="$COPILOT_ASSIGN_PAT" gh api --method POST \
-              -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
-              "/repos/$GITHUB_REPOSITORY/issues" --input - <<< "$payload" \
-              > /tmp/issue.json 2> /tmp/issue.err; then
-              echo "Filed and assigned: $(jq -r .html_url /tmp/issue.json)"
-              exit 0
-            fi
-            echo "::warning::Could not assign copilot-swe-agent[bot] (Copilot cloud agent may not be enabled for this repo/account). Filing an unassigned issue instead."
-            cat /tmp/issue.err
-          else
-            echo "::warning::COPILOT_ASSIGN_PAT is not set — filing an unassigned issue. Add the secret to enable auto-assignment to Copilot."
+          # 1. Create the issue, unassigned (assignment is a separate step —
+          #    see implementation note above). Explicit success check below
+          #    because `set -e` does NOT reliably catch a failing command
+          #    substitution used in a variable assignment in bash.
+          plain_payload=$(jq -n --arg title "$title" --arg body "$body" '{title: $title, body: $body}')
+          if ! issue_json=$(gh api --method POST -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" "/repos/$GITHUB_REPOSITORY/issues" \
+            --input - <<< "$plain_payload"); then
+            echo "::error::Failed to create the drift-tracking issue." >&2
+            exit 1
+          fi
+          issue_node_id=$(jq -r .node_id <<< "$issue_json")
+          echo "Filed: $(jq -r .html_url <<< "$issue_json")"
+
+          if [ -z "$COPILOT_ASSIGN_PAT" ]; then
+            echo "::warning::COPILOT_ASSIGN_PAT is not set — issue filed unassigned. Add the secret to enable auto-assignment to Copilot."
+            exit 0
           fi
 
-          plain_payload=$(jq -n --arg title "$title" --arg body "$body" '{title: $title, body: $body}')
-          gh api --method POST -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" "/repos/$GITHUB_REPOSITORY/issues" \
-            --input - <<< "$plain_payload"
+          owner="${GITHUB_REPOSITORY%%/*}"
+          name="${GITHUB_REPOSITORY##*/}"
+
+          repo_id=$(GH_TOKEN="$COPILOT_ASSIGN_PAT" gh api graphql -f query='
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) { id }
+            }' -f owner="$owner" -f name="$name" --jq '.data.repository.id' 2> /tmp/repo.err) || true
+
+          bot_id=$(GH_TOKEN="$COPILOT_ASSIGN_PAT" gh api graphql -f query='
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
+                suggestedActors(capabilities: [CAN_BE_ASSIGNED], first: 50) {
+                  nodes { login ... on Bot { id } }
+                }
+              }
+            }' -f owner="$owner" -f name="$name" \
+            --jq '.data.repository.suggestedActors.nodes[] | select(.login == "copilot-swe-agent") | .id' 2> /tmp/bot.err) || true
+
+          if [ -z "$repo_id" ] || [ -z "$bot_id" ]; then
+            echo "::warning::Could not resolve repository or copilot-swe-agent IDs (Copilot cloud agent may not be enabled for this repo/account, or the PAT lacks scope/type support). Issue stays unassigned."
+            cat /tmp/repo.err /tmp/bot.err 2>/dev/null || true
+            exit 0
+          fi
+
+          instructions="Read the diagnostics in the issue body (or re-run \`bun run check:omp-head\`) to see the exact tsgo errors. Fix the drift in this plugin's src/ so it typechecks against the current omp host source again. Verify with \`bun run check && bun test\` (against the installed host) AND \`bun run check:omp-head\` (against omp HEAD) before opening the PR."
+
+          if GH_TOKEN="$COPILOT_ASSIGN_PAT" gh api graphql \
+            -H 'GraphQL-Features: issues_copilot_assignment_api_support,coding_agent_model_selection' \
+            -f query='
+              mutation($issueId: ID!, $botId: ID!, $repoId: ID!, $instructions: String!) {
+                addAssigneesToAssignable(input: {
+                  assignableId: $issueId,
+                  assigneeIds: [$botId],
+                  agentAssignment: { targetRepositoryId: $repoId, baseRef: "main", customInstructions: $instructions }
+                }) {
+                  assignable { ... on Issue { id } }
+                }
+              }' \
+            -f issueId="$issue_node_id" -f botId="$bot_id" -f repoId="$repo_id" -f instructions="$instructions" \
+            > /tmp/assign.json 2> /tmp/assign.err; then
+            echo "Assigned copilot-swe-agent[bot]."
+          else
+            echo "::warning::Could not assign copilot-swe-agent[bot] via GraphQL (a fine-grained PAT may not support this — try a classic PAT). Issue stays unassigned."
+            cat /tmp/assign.err
+          fi

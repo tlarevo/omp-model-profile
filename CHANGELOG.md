@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- Extended `.github/workflows/omp-drift.yml` with a `file-agent-task` job: when the weekly omp-HEAD typecheck fails, it captures the tsgo diagnostics, files (or reuses, deduplicated by title search) a tracking issue with them embedded, and — if a `COPILOT_ASSIGN_PAT` repository secret is configured and Copilot cloud agent is enabled — assigns the issue to the Copilot coding agent (`copilot-swe-agent[bot]`) so it can investigate and open a fix PR unattended. Falls back to a plain unassigned issue (via the default `GITHUB_TOKEN`) when no PAT is configured or assignment otherwise fails, so drift is never silently lost.
+
 ## [0.2.1] - 2026-06-28
 
 ### Added

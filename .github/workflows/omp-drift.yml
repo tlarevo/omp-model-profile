@@ -14,4 +14,120 @@ jobs:
         with:
           bun-version: latest
       - run: bun install --frozen-lockfile
-      - run: bun run check:omp-head
+      - name: Typecheck against omp main
+        id: check
+        run: |
+          set -o pipefail
+          bun run check:omp-head 2>&1 | tee drift-output.log
+        continue-on-error: true
+      - name: Upload diagnostics
+        if: steps.check.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-output
+          path: drift-output.log
+      - name: Fail the job if drift was detected
+        if: steps.check.outcome == 'failure'
+        run: exit 1
+
+  # Runs only when `drift` fails. Files (or reuses) a tracking issue with the
+  # captured tsgo diagnostics, and — when a Copilot-capable token is
+  # available — assigns it to the Copilot coding agent (copilot-swe-agent[bot])
+  # so it can investigate and open a fix PR unattended.
+  #
+  # Copilot assignment requires:
+  #   - Copilot cloud agent enabled for this repo/account (any paid Copilot
+  #     plan — Pro, Pro+, Business, or Enterprise; the issue-assignment API
+  #     used here is broader than the Business/Enterprise-only agent-tasks
+  #     API). See https://docs.github.com/en/copilot/concepts/agents/cloud-agent/access-management
+  #   - A `COPILOT_ASSIGN_PAT` repository secret: a personal access token
+  #     (classic, `repo` scope) or fine-grained PAT with "Read access to
+  #     metadata" + "Read and write access to actions, contents, issues and
+  #     pull requests". The default GITHUB_TOKEN cannot assign Copilot —
+  #     assignment requires a user-to-server token.
+  # Without COPILOT_ASSIGN_PAT, or if Copilot assignment otherwise fails
+  # (e.g. cloud agent not enabled), this still files a plain, unassigned
+  # issue via the default GITHUB_TOKEN so the drift is never silently lost.
+  file-agent-task:
+    needs: drift
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      actions: read
+    steps:
+      - name: Download diagnostics
+        uses: actions/download-artifact@v4
+        with:
+          name: drift-output
+        continue-on-error: true
+      - name: File (or skip if already open) a drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COPILOT_ASSIGN_PAT: ${{ secrets.COPILOT_ASSIGN_PAT }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" \
+            --search 'in:title "omp HEAD drift" is:open' \
+            --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "Open drift issue #$existing already exists — skipping."
+            exit 0
+          fi
+
+          if [ -f drift-output.log ]; then
+            diagnostics=$(tail -n 200 drift-output.log)
+          else
+            diagnostics="Diagnostics log unavailable (the drift job likely failed before producing one) — see the run for details."
+          fi
+
+          title="omp HEAD drift: plugin fails to typecheck against the current omp source"
+          body=$(printf '%s\n' \
+            "The weekly \`omp-drift\` workflow detected that this plugin no longer typechecks against the current \`can1357/oh-my-pi\`@main source (\`bun run check:omp-head\`)." \
+            "" \
+            "Failing run: $RUN_URL" \
+            "" \
+            "Diagnostics (last 200 lines):" \
+            '```' \
+            "$diagnostics" \
+            '```' \
+            "" \
+            "Update this plugin's source to match the new host API shape, then verify with \`bun run check && bun test\` (against the installed host) AND \`bun run check:omp-head\` (against omp HEAD) before opening a PR.")
+
+          if [ -n "$COPILOT_ASSIGN_PAT" ]; then
+            instructions="Read the diagnostics in the issue body (or re-run \`bun run check:omp-head\`) to see the exact tsgo errors. Fix the drift in this plugin's src/ so it typechecks against the current omp host source again. Verify with \`bun run check && bun test\` (against the installed host) AND \`bun run check:omp-head\` (against omp HEAD) before opening the PR."
+            payload=$(jq -n \
+              --arg title "$title" \
+              --arg body "$body" \
+              --arg instructions "$instructions" \
+              --arg repo "$GITHUB_REPOSITORY" \
+              '{
+                title: $title,
+                body: $body,
+                assignees: ["copilot-swe-agent[bot]"],
+                agent_assignment: {
+                  target_repo: $repo,
+                  base_branch: "main",
+                  custom_instructions: $instructions
+                }
+              }')
+            if GH_TOKEN="$COPILOT_ASSIGN_PAT" gh api --method POST \
+              -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" \
+              "/repos/$GITHUB_REPOSITORY/issues" --input - <<< "$payload" \
+              > /tmp/issue.json 2> /tmp/issue.err; then
+              echo "Filed and assigned: $(jq -r .html_url /tmp/issue.json)"
+              exit 0
+            fi
+            echo "::warning::Could not assign copilot-swe-agent[bot] (Copilot cloud agent may not be enabled for this repo/account). Filing an unassigned issue instead."
+            cat /tmp/issue.err
+          else
+            echo "::warning::COPILOT_ASSIGN_PAT is not set — filing an unassigned issue. Add the secret to enable auto-assignment to Copilot."
+          fi
+
+          plain_payload=$(jq -n --arg title "$title" --arg body "$body" '{title: $title, body: $body}')
+          gh api --method POST -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" "/repos/$GITHUB_REPOSITORY/issues" \
+            --input - <<< "$plain_payload"
